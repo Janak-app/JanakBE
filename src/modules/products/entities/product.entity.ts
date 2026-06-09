@@ -1,0 +1,86 @@
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+import { StockStatus } from '../../../common/enums/stock-status.enum';
+import { Brand } from '../../brands/entities/brand.entity';
+import { Category } from '../../categories/entities/category.entity';
+import { ProductDocument } from './product-document.entity';
+import { ProductImage } from './product-image.entity';
+import { ProductReview } from './product-review.entity';
+import { ProductSpec } from './product-spec.entity';
+
+@Entity('products')
+export class Product {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  name: string;
+
+  @Column({ unique: true })
+  slug: string;
+
+  @Column({ type: 'text', nullable: true })
+  description: string;
+
+  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  price: number;
+
+  @Column({
+    type: 'enum',
+    enum: StockStatus,
+    default: StockStatus.IN_STOCK,
+  })
+  stockStatus: StockStatus;
+
+  @Column({ nullable: true })
+  modelNumber: string;
+
+  @Column({ nullable: true })
+  salesRepName: string;
+
+  @Column({ nullable: true })
+  salesRepPhone: string;
+
+  @Column({ default: false })
+  isFeatured: boolean;
+
+  @Column({ default: false })
+  isNewArrival: boolean;
+
+  @Column({ default: true })
+  isActive: boolean;
+
+  @ManyToOne(() => Category, { eager: true })
+  @JoinColumn()
+  category: Category;
+
+  @ManyToOne(() => Brand, { eager: true })
+  @JoinColumn()
+  brand: Brand;
+
+  @OneToMany(() => ProductImage, (image) => image.product, { cascade: true })
+  images: ProductImage[];
+
+  @OneToMany(() => ProductSpec, (spec) => spec.product, { cascade: true })
+  specs: ProductSpec[];
+
+  @OneToMany(() => ProductDocument, (doc) => doc.product, { cascade: true })
+  documents: ProductDocument[];
+
+  @OneToMany(() => ProductReview, (review) => review.product)
+  reviews: ProductReview[];
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+}

@@ -1,0 +1,125 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { calculateGst } from '../../common/utils/gst.util';
+import { Product } from '../products/entities/product.entity';
+import { User } from '../users/entities/user.entity';
+import { Coupon, CouponUsageType } from '../coupons/entities/coupon.entity';
+import { AddCartItemDto, UpdateCartItemDto } from './dto/add-cart-item.dto';
+import { CartItem } from './entities/cart-item.entity';
+import { Cart } from './entities/cart.entity';
+import { SavedItem } from './entities/saved-item.entity';
+
+@Injectable()
+export class CartService {
+  constructor(
+    @InjectRepository(Cart)
+    private cartRepository: Repository<Cart>,
+    @InjectRepository(CartItem)
+    private cartItemRepository: Repository<CartItem>,
+    @InjectRepository(SavedItem)
+    private savedItemRepository: Repository<SavedItem>,
+    @InjectRepository(Product)
+    private productRepository: Repository<Product>,
+    @InjectRepository(Coupon)
+    private couponRepository: Repository<Coupon>,
+  ) {}
+
+  private async getOrCreateCart(user: User): Promise<Cart> {
+    let cart = await this.cartRepository.findOne({
+      where: { user: { id: user.id } },
+      relations: { items: { product: { images: true } }, savedItems: { product: true } },
+    });
+    if (!cart) {
+      cart = this.cartRepository.create({ user });
+      await this.cartRepository.save(cart);
+      cart.items = [];
+      cart.savedItems = [];
+    }
+    return cart;
+  }
+
+  private buildSummary(cart: Cart, coupon?: Coupon | null) {
+    const subtotal = cart.items.reduce(
+      (sum, item) => sum + Number(item.product.price) * item.quantity,
+      0,
+    );
+    const { gstAmount } = calculateGst(subtotal);
+    const discountAmount = coupon
+      ? Math.round(subtotal * (Number(coupon.discountPercent) / 100))
+      : 0;
+    const shippingAmount = subtotal >= 50000 ? 0 : 500;
+    const totalAmount = subtotal + gstAmount - discountAmount + shippingAmount;
+    return { subtotal, gstAmount, discountAmount, shippingAmount, totalAmount };
+  }
+
+  async getCart(user: User) {
+    const cart = await this.getOrCreateCart(user);
+    return { ...cart, summary: this.buildSummary(cart) };
+  }
+
+  async addItem(user: User, dto: AddCartItemDto) {
+    const cart = await this.getOrCreateCart(user);
+    const product = await this.productRepository.findOne({ where: { id: dto.productId } });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const existing = cart.items.find((i) => i.product.id === dto.productId);
+    if (existing) {
+      existing.quantity += dto.quantity;
+      await this.cartItemRepository.save(existing);
+    } else {
+      const item = this.cartItemRepository.create({ cart, product, quantity: dto.quantity });
+      await this.cartItemRepository.save(item);
+    }
+    return this.getCart(user);
+  }
+
+  async updateItem(user: User, itemId: string, dto: UpdateCartItemDto) {
+    const cart = await this.getOrCreateCart(user);
+    const item = cart.items.find((i) => i.id === itemId);
+    if (!item) throw new NotFoundException('Cart item not found');
+    item.quantity = dto.quantity;
+    await this.cartItemRepository.save(item);
+    return this.getCart(user);
+  }
+
+  async removeItem(user: User, itemId: string) {
+    const cart = await this.getOrCreateCart(user);
+    const item = cart.items.find((i) => i.id === itemId);
+    if (!item) throw new NotFoundException('Cart item not found');
+    await this.cartItemRepository.remove(item);
+    return this.getCart(user);
+  }
+
+  async clearCart(user: User) {
+    const cart = await this.getOrCreateCart(user);
+    await this.cartItemRepository.remove(cart.items);
+    return { message: 'Cart cleared' };
+  }
+
+  async applyCoupon(user: User, code: string) {
+    const coupon = await this.couponRepository.findOne({
+      where: { code: code.toUpperCase(), isActive: true },
+    });
+    if (!coupon) throw new BadRequestException('Invalid or expired coupon');
+    if (coupon.expiresAt && coupon.expiresAt < new Date()) {
+      throw new BadRequestException('Coupon has expired');
+    }
+    const cart = await this.getOrCreateCart(user);
+    return { ...this.buildSummary(cart, coupon), coupon: { code: coupon.code, discountPercent: coupon.discountPercent } };
+  }
+
+  async saveForLater(user: User, itemId: string) {
+    const cart = await this.getOrCreateCart(user);
+    const item = cart.items.find((i) => i.id === itemId);
+    if (!item) throw new NotFoundException('Cart item not found');
+    const saved = this.savedItemRepository.create({ cart, product: item.product });
+    await this.savedItemRepository.save(saved);
+    await this.cartItemRepository.remove(item);
+    return this.getCart(user);
+  }
+}

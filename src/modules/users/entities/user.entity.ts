@@ -19,15 +19,6 @@ export class User {
   @Column({ select: false })
   password: string;
 
-  @Column()
-  firstName: string;
-
-  @Column()
-  lastName: string;
-
-  @Column({ nullable: true })
-  phone: string;
-
   @Column({ type: 'enum', enum: UserRole, default: UserRole.CUSTOMER })
   role: UserRole;
 

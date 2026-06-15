@@ -1,8 +1,7 @@
-import { Body, Controller, Get, Patch } from '@nestjs/common';
+import { Controller, Get } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from './entities/user.entity';
-import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('Profile')
@@ -15,11 +14,5 @@ export class UsersController {
   @ApiOperation({ summary: 'Get user profile' })
   getProfile(@CurrentUser() user: User) {
     return this.usersService.getProfile(user.id);
-  }
-
-  @Patch()
-  @ApiOperation({ summary: 'Update user profile' })
-  updateProfile(@CurrentUser() user: User, @Body() dto: UpdateProfileDto) {
-    return this.usersService.updateProfile(user.id, dto);
   }
 }

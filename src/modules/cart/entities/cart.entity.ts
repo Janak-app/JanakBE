@@ -1,4 +1,5 @@
 import {
+  Column,
   CreateDateColumn,
   Entity,
   JoinColumn,
@@ -16,9 +17,12 @@ export class Cart {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @OneToOne(() => User, { onDelete: 'CASCADE' })
+  @OneToOne(() => User, { onDelete: 'CASCADE', nullable: true } as any)
   @JoinColumn()
-  user: User;
+  user: User | null;
+
+  @Column({ type: 'varchar', nullable: true, unique: true })
+  guestId: string | null;
 
   @OneToMany(() => CartItem, (item) => item.cart, { cascade: true })
   items: CartItem[];

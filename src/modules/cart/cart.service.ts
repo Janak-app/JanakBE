@@ -43,6 +43,72 @@ export class CartService {
     return cart;
   }
 
+  private async getOrCreateGuestCart(guestId: string): Promise<Cart> {
+    let cart = await this.cartRepository.findOne({
+      where: { guestId },
+      relations: { items: { product: { images: true } }, savedItems: { product: true } },
+    });
+    if (!cart) {
+      cart = this.cartRepository.create({ guestId, user: null });
+      await this.cartRepository.save(cart);
+      cart.items = [];
+      cart.savedItems = [];
+    }
+    return cart;
+  }
+
+  async mergeGuestCart(guestId: string, user: User): Promise<void> {
+    const guestCart = await this.cartRepository.findOne({
+      where: { guestId },
+      relations: { items: { product: true } },
+    });
+    if (!guestCart || guestCart.items.length === 0) return;
+
+    const userCart = await this.getOrCreateCart(user);
+    const userItemMap = new Map(userCart.items.map((i) => [i.product.id, i]));
+
+    for (const guestItem of guestCart.items) {
+      const existing = userItemMap.get(guestItem.product.id);
+      if (existing) {
+        existing.quantity += guestItem.quantity;
+        await this.cartItemRepository.save(existing);
+      } else {
+        const item = this.cartItemRepository.create({ cart: userCart, product: guestItem.product, quantity: guestItem.quantity });
+        await this.cartItemRepository.save(item);
+      }
+    }
+    await this.cartRepository.remove(guestCart);
+  }
+
+  async getGuestCart(guestId: string) {
+    const cart = await this.getOrCreateGuestCart(guestId);
+    return { ...cart, summary: this.buildSummary(cart) };
+  }
+
+  async addGuestItem(guestId: string, dto: AddCartItemDto) {
+    const cart = await this.getOrCreateGuestCart(guestId);
+    const product = await this.productRepository.findOne({ where: { id: dto.productId } });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const existing = cart.items.find((i) => i.product.id === dto.productId);
+    if (existing) {
+      existing.quantity += dto.quantity;
+      await this.cartItemRepository.save(existing);
+    } else {
+      const item = this.cartItemRepository.create({ cart, product, quantity: dto.quantity });
+      await this.cartItemRepository.save(item);
+    }
+    return this.getGuestCart(guestId);
+  }
+
+  async removeGuestItem(guestId: string, itemId: string) {
+    const cart = await this.getOrCreateGuestCart(guestId);
+    const item = cart.items.find((i) => i.id === itemId);
+    if (!item) throw new NotFoundException('Cart item not found');
+    await this.cartItemRepository.remove(item);
+    return this.getGuestCart(guestId);
+  }
+
   private buildSummary(cart: Cart, coupon?: Coupon | null) {
     const subtotal = cart.items.reduce(
       (sum, item) => sum + Number(item.product.price) * item.quantity,

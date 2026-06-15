@@ -1,11 +1,13 @@
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import cookieParser = require('cookie-parser');
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  app.use(cookieParser());
   app.setGlobalPrefix('api');
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
@@ -17,7 +19,10 @@ async function bootstrap() {
     }),
   );
 
-  app.enableCors();
+  app.enableCors({
+    origin: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+    credentials: true,
+  });
 
   const config = new DocumentBuilder()
     .setTitle('Janak Positioning API')

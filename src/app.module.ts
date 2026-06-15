@@ -23,6 +23,8 @@ import { QuotesModule } from './modules/quotes/quotes.module';
 import { UsersModule } from './modules/users/users.module';
 import { WishlistModule } from './modules/wishlist/wishlist.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
+import { ApiLogsModule } from './modules/api-logs/api-logs.module';
+import { RedisModule } from './common/services/redis.module';
 
 @Module({
   imports: [
@@ -44,6 +46,7 @@ import { AddressesModule } from './modules/addresses/addresses.module';
       }),
     }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
+    RedisModule,
     AuthModule,
     UsersModule,
     CategoriesModule,
@@ -59,6 +62,7 @@ import { AddressesModule } from './modules/addresses/addresses.module';
     QuotesModule,
     CompareModule,
     AdminModule,
+    ApiLogsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

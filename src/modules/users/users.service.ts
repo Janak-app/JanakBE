@@ -24,8 +24,4 @@ export class UsersService {
     return user;
   }
 
-  async updateProfile(id: string, data: Partial<User>) {
-    await this.usersRepository.update(id, data);
-    return this.getProfile(id);
-  }
 }

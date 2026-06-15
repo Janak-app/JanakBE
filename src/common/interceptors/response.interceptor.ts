@@ -11,6 +11,7 @@ export interface ApiResponse<T> {
   success: boolean;
   data: T;
   message?: string;
+  timestamp: string;
 }
 
 @Injectable()
@@ -26,6 +27,7 @@ export class ResponseInterceptor<T>
         success: true,
         data: data?.data ?? data,
         message: data?.message ?? 'Success',
+        timestamp: new Date().toISOString(),
       })),
     );
   }

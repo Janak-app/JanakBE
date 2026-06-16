@@ -128,6 +128,11 @@ export class CheckoutService {
 
       await manager.delete('cart_items', { cart: { id: cart.id } });
 
+      // Deactivate coupon after use — single use only
+      if (coupon) {
+        await manager.update(Coupon, { id: coupon.id }, { isActive: false });
+      }
+
       return {
         orderId: order.orderId,
         id: order.id,

@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -9,6 +9,7 @@ import { UserRole } from '../../common/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
 import { CartService } from '../cart/cart.service';
 import { RedisService } from '../../common/services/redis.service';
+import { MailService } from '../../common/services/mail.service';
 import { JwtPayload } from './strategies/jwt.strategy';
 import { RegisterDto } from './dto/register.dto';
 
@@ -21,6 +22,7 @@ export class AuthService {
     private configService: ConfigService,
     private cartService: CartService,
     private redisService: RedisService,
+    private mailService: MailService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -95,6 +97,24 @@ export class AuthService {
     const payload = { sub: guestId, email: 'guest', role: UserRole.GUEST };
     const accessToken = this.jwtService.sign(payload, { expiresIn: '30d' });
     return { accessToken, guestId, user: { role: UserRole.GUEST } };
+  }
+
+  async forgotPassword(email: string): Promise<void> {
+    const user = await this.usersRepository.findOne({ where: { email } });
+    if (!user) return; // don't reveal if email exists
+
+    const token = randomUUID();
+    await this.redisService.set(`reset:${token}`, user.id, 15 * 60); // 15 minutes
+    await this.mailService.sendPasswordReset(email, token);
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    const userId = await this.redisService.get(`reset:${token}`);
+    if (!userId) throw new BadRequestException('Invalid or expired reset token');
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await this.usersRepository.update(userId, { password: hashed });
+    await this.redisService.del(`reset:${token}`);
   }
 
   getMe(user: User) {

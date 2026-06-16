@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Coupon } from '../../coupons/entities/coupon.entity';
@@ -15,11 +15,11 @@ export class AdminCouponsService {
     return this.couponsRepository.find({ order: { createdAt: 'DESC' } });
   }
 
-  create(dto: CreateCouponDto) {
-    const coupon = this.couponsRepository.create({
-      ...dto,
-      code: dto.code.toUpperCase(),
-    });
+  async create(dto: CreateCouponDto) {
+    const code = dto.code.toUpperCase();
+    const existing = await this.couponsRepository.findOne({ where: { code } });
+    if (existing) throw new ConflictException('Coupon code already exists');
+    const coupon = this.couponsRepository.create({ ...dto, code });
     return this.couponsRepository.save(coupon);
   }
 

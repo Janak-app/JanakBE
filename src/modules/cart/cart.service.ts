@@ -8,7 +8,7 @@ import { Repository } from 'typeorm';
 import { calculateGst } from '../../common/utils/gst.util';
 import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
-import { Coupon, CouponUsageType } from '../coupons/entities/coupon.entity';
+import { Coupon } from '../coupons/entities/coupon.entity';
 import { AddCartItemDto, UpdateCartItemDto } from './dto/add-cart-item.dto';
 import { CartItem } from './entities/cart-item.entity';
 import { Cart } from './entities/cart.entity';

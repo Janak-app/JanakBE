@@ -57,8 +57,8 @@ export class ProductsService {
     const limit = filters.limit ?? 20;
     query.skip((page - 1) * limit).take(limit);
 
-    const [data, total] = await query.getManyAndCount();
-    return { data, total, page, limit };
+    const [items, total] = await query.getManyAndCount();
+    return { items, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findOne(id: string) {

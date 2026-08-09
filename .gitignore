@@ -40,3 +40,12 @@ lerna-debug.log*
 .env.test.local
 .env.production.local
 .env.local
+
+# Uploads (binary assets, mounted via Docker volume)
+/public/uploads
+
+# Product datasheets and images (local only)
+/Product Info
+
+# Test results
+api-test-results.md

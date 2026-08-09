@@ -1,0 +1,197 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { calculateGst } from '../../common/utils/gst.util';
+import { generateOrderId } from '../../common/utils/order-id.util';
+import { OrderStatus } from '../../common/enums/order-status.enum';
+import { Address } from '../addresses/entities/address.entity';
+import { Coupon } from '../coupons/entities/coupon.entity';
+import { OrderItem } from '../orders/entities/order-item.entity';
+import { OrderTracking } from '../orders/entities/order-tracking.entity';
+import { Order } from '../orders/entities/order.entity';
+import { User } from '../users/entities/user.entity';
+import { Cart } from '../cart/entities/cart.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/entities/notification.entity';
+import { PlaceOrderDto } from './dto/place-order.dto';
+
+@Injectable()
+export class CheckoutService {
+  constructor(
+    @InjectRepository(Cart)
+    private cartRepository: Repository<Cart>,
+    @InjectRepository(Address)
+    private addressRepository: Repository<Address>,
+    @InjectRepository(Order)
+    private orderRepository: Repository<Order>,
+    @InjectRepository(Coupon)
+    private couponRepository: Repository<Coupon>,
+    private dataSource: DataSource,
+    private notificationsService: NotificationsService,
+    private configService: ConfigService,
+  ) {}
+
+  async initiate(user: User) {
+    const cart = await this.cartRepository.findOne({
+      where: { user: { id: user.id } },
+      relations: { items: { product: true } },
+    });
+    if (!cart || !cart.items.length) throw new BadRequestException('Cart is empty');
+
+    const subtotal = cart.items.reduce(
+      (sum, item) => sum + Number(item.product.price) * item.quantity,
+      0,
+    );
+    const { gstAmount, totalAmount } = calculateGst(subtotal);
+    const shippingAmount = subtotal >= 50000 ? 0 : 500;
+
+    return {
+      items: cart.items,
+      summary: { subtotal, gstAmount, shippingAmount, totalAmount: totalAmount + shippingAmount },
+    };
+  }
+
+  async placeOrder(user: User, dto: PlaceOrderDto) {
+    const cart = await this.cartRepository.findOne({
+      where: { user: { id: user.id } },
+      relations: { items: { product: true } },
+    });
+    if (!cart || !cart.items.length) throw new BadRequestException('Cart is empty');
+
+    const address = await this.addressRepository.findOne({
+      where: { id: dto.addressId, user: { id: user.id } },
+    });
+    if (!address) throw new NotFoundException('Address not found');
+
+    let coupon: Coupon | null = null;
+    if (dto.couponCode) {
+      coupon = await this.couponRepository.findOne({
+        where: { code: dto.couponCode.toUpperCase(), isActive: true },
+      });
+    }
+
+    const subtotal = cart.items.reduce(
+      (sum, item) => sum + Number(item.product.price) * item.quantity,
+      0,
+    );
+    const { gstAmount } = calculateGst(subtotal);
+    const discountAmount = coupon
+      ? Math.round(subtotal * (Number(coupon.discountPercent) / 100))
+      : 0;
+    const shippingAmount = subtotal >= 50000 ? 0 : 500;
+    const totalAmount = subtotal + gstAmount - discountAmount + shippingAmount;
+
+    const ADVANCE_CAP = 50000;
+    const tenPercent = Math.round(totalAmount * 0.1 * 100) / 100;
+    const advanceAmount = Math.min(tenPercent, ADVANCE_CAP);
+    const balanceAmount = Math.round((totalAmount - advanceAmount) * 100) / 100;
+    const isFullPayment = balanceAmount === 0;
+
+    const estimatedStart = new Date();
+    estimatedStart.setDate(estimatedStart.getDate() + 5);
+    const estimatedEnd = new Date();
+    estimatedEnd.setDate(estimatedEnd.getDate() + 8);
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const count = await manager.count(Order);
+      const orderId = generateOrderId(count + 1);
+
+      const order = manager.create(Order, {
+        orderId,
+        user,
+        subtotal,
+        gstAmount,
+        shippingAmount,
+        totalAmount,
+        advanceAmount,
+        balanceAmount,
+        transactionId: dto.transactionId,
+        paymentMethod: dto.paymentMethod,
+        requiresGstBill: dto.requiresGstBill ?? false,
+        status: OrderStatus.PENDING_ADVANCE_PAYMENT,
+        estimatedDeliveryStart: estimatedStart,
+        estimatedDeliveryEnd: estimatedEnd,
+        shippingAddress: {
+          fullName: address.fullName,
+          addressLine1: address.addressLine1,
+          addressLine2: address.addressLine2 ?? '',
+          city: address.city,
+          state: address.state,
+          pincode: address.pincode,
+          phone: address.phone,
+        },
+      });
+      await manager.save(order);
+
+      const orderItems = cart.items.map((item) =>
+        manager.create(OrderItem, {
+          order,
+          product: item.product,
+          productName: item.product.name,
+          quantity: item.quantity,
+          unitPrice: item.product.price,
+          totalPrice: Number(item.product.price) * item.quantity,
+        }),
+      );
+      await manager.save(orderItems);
+
+      const tracking = manager.create(OrderTracking, {
+        order,
+        events: [{ status: 'Order Placed', timestamp: new Date(), message: 'Your order has been placed successfully' }],
+      });
+      await manager.save(tracking);
+
+      await manager.delete('cart_items', { cart: { id: cart.id } });
+
+      if (coupon) {
+        await manager.update(Coupon, { id: coupon.id }, { isActive: false });
+      }
+
+      return order;
+    });
+
+    const neftDetails = !isFullPayment
+      ? {
+          accountName: this.configService.get<string>('NEFT_ACCOUNT_NAME'),
+          accountNumber: this.configService.get<string>('NEFT_ACCOUNT_NUMBER'),
+          ifscCode: this.configService.get<string>('NEFT_IFSC_CODE'),
+          bankName: this.configService.get<string>('NEFT_BANK_NAME'),
+          qrCodeUrl: this.configService.get<string>('QR_CODE_URL'),
+        }
+      : undefined;
+
+    const notificationMessage = isFullPayment
+      ? `Your order ${result.orderId} has been placed. Please complete the full payment of ₹${advanceAmount.toFixed(2)} via UPI/gateway to confirm your order.`
+      : `Your order ${result.orderId} has been placed. Please pay ₹${advanceAmount.toFixed(2)} advance via UPI/gateway. Remaining ₹${balanceAmount.toFixed(2)} will be collected via NEFT before shipping.`;
+
+    await this.notificationsService.create(user, {
+      title: 'Order Placed — Payment Required',
+      message: notificationMessage,
+      type: NotificationType.PAYMENT_ADVANCE,
+      orderId: result.orderId,
+      metadata: {
+        advanceAmount,
+        balanceAmount,
+        totalAmount,
+        isFullPayment,
+        ...(neftDetails ? { neftDetails } : {}),
+      },
+    });
+
+    return {
+      orderId: result.orderId,
+      id: result.id,
+      totalAmount: result.totalAmount,
+      advanceAmount,
+      balanceAmount,
+      isFullPayment,
+      ...(neftDetails ? { neftDetails } : {}),
+      estimatedDeliveryStart: estimatedStart,
+      estimatedDeliveryEnd: estimatedEnd,
+      message: isFullPayment
+        ? 'Order placed. Please complete full payment via UPI/gateway.'
+        : `Order placed. Pay ₹${advanceAmount.toFixed(2)} now via UPI. Remaining ₹${balanceAmount.toFixed(2)} via NEFT before shipping.`,
+    };
+  }
+}
